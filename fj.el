@@ -199,6 +199,13 @@ Sets `corfu-auto' to t, buffer locally.
 Disable this if you prefer to trigger autocompletion manually."
   :type 'boolean)
 
+(defcustom fj-prefer-browse-url nil
+  "Whether to use `browse-url' instead of `browse-url-generic'.
+When nil (default), `browse-url-generic' is used directly.
+When non-nil, `browse-url' is used, respecting your
+`browse-url-browser-function' configuration."
+  :type 'boolean)
+
 ;;; FACES
 
 (defface fj-comment-face
@@ -4882,18 +4889,25 @@ Use ID if provided."
 
 ;;; BROWSE
 
+(defun fj--browse-url (url)
+  "Browse URL using `browse-url' or `browse-url-generic'.
+Which function is used depends on `fj-prefer-browse-url'."
+  (if fj-prefer-browse-url
+      (browse-url url)
+    (browse-url-generic url)))
+
 (defun fj-tl-browse-entry ()
   "Browse URL of tabulated list entry at point."
   (interactive)
   (fj-with-entry
    (let ((url (fj--property 'fj-url)))
-     (browse-url-generic url))))
+     (fj--browse-url url))))
 
 (defun fj-browse-view ()
   "Browse URL of view at point."
   (interactive)
   (let ((url (fj--get-buffer-spec :url)))
-    (browse-url-generic url)))
+    (fj--browse-url url)))
 
 (defun fj-tl-imenu-index-fun ()
   "Function for `imenu-create-index-function'.
@@ -5008,7 +5022,7 @@ ITEM is the team handle minus leading @.
 Note that teams URLs may not load if they are private."
   (pcase-let* ((`(,repo  ,team) (split-string item "/"))
                (url (format "%s/org/%s/teams/%s" fj-host repo team)))
-    (browse-url-generic url)))
+    (fj--browse-url url)))
 
 (defun fj-issue-ref-follow (item)
   "Follow an issue ref link.
@@ -5062,7 +5076,7 @@ Used for a mouse-click EVENT on a link."
   ;; FIXME: make for commit at point
   (let* ((resp (fj-get-commit repo owner sha))
          (url (alist-get 'html_url resp)))
-    (browse-url-generic url)))
+    (fj--browse-url url)))
 
 (defvar-keymap fj-commits-mode-map
   :doc "Keymap for `fj-commits-mode'."
