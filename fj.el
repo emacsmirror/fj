@@ -206,6 +206,11 @@ When non-nil, `browse-url' is used, respecting your
 `browse-url-browser-function' configuration."
   :type 'boolean)
 
+(defcustom fj-list-repo-langs nil
+  "Whether to display a language column in repo listings.
+Requires an extra request per repo, so is disabled by default."
+  :type '(boolean))
+
 ;;; FACES
 
 (defface fj-comment-face
@@ -965,11 +970,11 @@ X and Y are sorting args."
   (setq tabulated-list-padding 0 ;2) ; point directly on issue
         tabulated-list-sort-key '("Updated" . t) ;; default
         tabulated-list-format
-        '[("Name" 16 t)
+        `[("Name" 16 t)
           ("★" 3 fj-tl-sort-by-stars :right-align t)
           ("" 2 t)
           ("issues" 5 fj-tl-sort-by-issue-count :right-align t)
-          ("Lang" 10 t)
+          ,@(when fj-list-repo-langs '(("Lang" 10 t)))
           ("Updated" 12 t)
           ("Description" 55 nil)])
   (setq imenu-create-index-function #'fj-tl-imenu-index-fun))
@@ -3768,12 +3773,12 @@ Returns annotation for CAND, a candidate."
   (setq tabulated-list-padding 0 ;2) ; point directly on issue
         ;; tabulated-list-sort-key '("Updated" . t) ;; default
         tabulated-list-format
-        '[("Name" 12 t)
+        `[("Name" 12 t)
           ("Owner" 12 t)
           ("★" 3 fj-tl-sort-by-stars :right-align t)
           ("" 2 t)
           ("issues" 5 fj-tl-sort-by-issue-count :right-align t)
-          ("Lang" 10 t)
+          ,@(when fj-list-repo-langs ("Lang" 10 t))
           ("Updated" 12 t)
           ("Description" 55 nil)])
   (setq imenu-create-index-function #'fj-tl-imenu-index-fun))
@@ -3816,8 +3821,9 @@ NO-OWNER means don't display owner column (user repos view)."
             (updated-display
              (fedi--relative-time-description updated nil :brief))
             ;; just get first lang:
-            (lang (symbol-name
-                   (caar (fj-get-languages .name .owner.username)))))
+            (lang (when fj-list-repo-langs
+                    (symbol-name
+                     (caar (fj-get-languages .name .owner.username))))))
        `(nil ;; TODO: id
          [(,.name face fj-item-face
                   id ,.id
@@ -3840,7 +3846,7 @@ NO-OWNER means don't display owner column (user repos view)."
           (,(number-to-string .open_issues_count)
            id ,.id face fj-figures-face
            item repo)
-          (,lang) ;; .language
+          ,@(when fj-list-repo-langs `((,lang))) ;; .language
           (,updated-str
            display ,updated-display
            face default
