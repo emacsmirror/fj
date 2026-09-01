@@ -56,10 +56,13 @@
 
 (require 'fj-transient)
 
+(require 'fj-inspect)
+
 ;;; VARIABLES
 ;; ours
 
 (defvar fj-token nil)
+(defvar fj-host nil) ;; dummy for fj-api/flycheck
 
 (defvar fj-extra-repos nil
   ;; list of "owner/repo"
@@ -738,7 +741,7 @@ the working-directory (for directory-local variables)."
 
 (defmacro fj-with-buffer (buf mode wd ow &rest body)
   "Set up a BUF fer in MODE and call BODY.
-Sets up default-directory as WD and ensures local variables take effect
+Sets up `default-directory' as WD and ensures local variables take effect
 in non-file buffers.
 OW is other window argument for `fedi-with-buffer'."
   (declare (indent 4)
@@ -1779,7 +1782,7 @@ NEW-BODY is the new comment text to send."
     (fj-get endpoint nil nil :silent)))
 
 (defun fj-render-issue-reactions (reactions)
-  "Render reactions for issue with ID in REPO by OWNER.
+  "Render REACTIONS for issue with ID in REPO by OWNER.
 If none, return emptry string."
   (if-let* ((grouped (fj-group-reactions reactions)))
       (concat fedi-horiz-bar "\n"
@@ -5015,7 +5018,8 @@ If it looks like a link to an item, load it."
            (fj-list-items (cadr owner-repo) (car owner-repo) nil "issues"))
           (3 (if (equal "pulls" last)
                  (fj-list-pulls (cadr owner-repo) (car owner-repo))
-               (fj-list-issues (cadr owner-repo) (car owner-repo))))
+               (fj-list-issues (cadr owner-repo)) ;(car owner-repo)
+               ))
           (_
            (fj-item-view
             (cadr owner-repo) (car owner-repo) last
