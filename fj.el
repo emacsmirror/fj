@@ -2457,6 +2457,8 @@ SORT defaults to `fj-issues-sort-default'."
          (buf-name (format "*fj-%s-%s-%s*" repo state-str type)))
     (if (not has-issues)
         (user-error "Repo does not have %s" type)
+      (when fj-inspect-profile-requests
+        (fj-inspect-profile-requests "fj issues/prs TL"))
       (fj-with-tl #'fj-issue-tl-mode buf-name (fj-issue-tl-entries issues) wd nil
         (setq fj-current-repo repo
               fj-repo-data repo-data
@@ -3117,6 +3119,8 @@ END-PAGE should be a string of the highest page number to paginate to."
                     (alist-get 'message json) json))
        (t
         (fj-destructure-buf-spec (viewargs author owner repo)
+          (when fj-inspect-profile-requests
+            (fj-inspect-profile-requests "timeline"))
           ;; unless init-page arg, increment page in viewargs
           (let* ((page (plist-get viewargs :page))
                  (final-load-p
