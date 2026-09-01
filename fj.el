@@ -3782,7 +3782,7 @@ Returns annotation for CAND, a candidate."
           ("★" 3 fj-tl-sort-by-stars :right-align t)
           ("" 2 t)
           ("issues" 5 fj-tl-sort-by-issue-count :right-align t)
-          ,@(when fj-list-repo-langs ("Lang" 10 t))
+          ,@(when fj-list-repo-langs '("Lang" 10 t))
           ("Updated" 12 t)
           ("Description" 55 nil)])
   (setq imenu-create-index-function #'fj-tl-imenu-index-fun))
