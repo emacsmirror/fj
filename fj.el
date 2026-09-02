@@ -1781,8 +1781,19 @@ NEW-BODY is the new comment text to send."
                           owner repo id)))
     (fj-get endpoint nil nil :silent)))
 
+(defun fj-get-comment-reactions-async (repo owner id)
+  "Return reactions data for comment with ID in REPO by OWNER."
+  (let ((endpoint (format "repos/%s/%s/issues/comments/%s/reactions"
+                          owner repo id)))
+    (apply #'fedi-http--get-json-async
+           nil #'fj-get-comment-reactions-cb)))
+
+(defun fj-get-comment-reactions-cb (json)
+  ;; FIXME: get timeline buf, go right comment, then:
+  (fj-render-comment-reactions json))
+
 (defun fj-render-issue-reactions (reactions)
-  "Render REACTIONS for issue with ID in REPO by OWNER.
+  "Render REACTIONS for issue.
 If none, return emptry string."
   (if-let* ((grouped (fj-group-reactions reactions)))
       (concat fedi-horiz-bar "\n"
