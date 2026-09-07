@@ -2822,13 +2822,7 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
   (let-alist comment
     (let ((stamp (fedi--relative-time-description
                   (date-to-time .created_at)))
-          (reactions (fj-get-comment-reactions repo owner .id))
-          ;; timeline data doesn't have attachments data, so we need to
-          ;; fetch the comment from its own endpoint if we want to render
-          ;; them
-          ;; (assets (alist-get 'assets
-          ;; (fj-get-comment repo owner nil .id)))
-          )
+          (reactions (fj-get-comment-reactions repo owner .id)))
       (propertize
        (concat
         (fj-format-comment-header
@@ -2838,14 +2832,7 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
         "\n\n"
         (propertize (fj-render-body .body)
                     'fj-item-body t)
-        ;; assets placeholder:
-        (concat "\n"
-                (propertize "[assets]"
-                            ;; 'display 'invisible
-                            'fj-assets t)
-                "\n")
-        ;; (when assets
-        ;;   (fj-render-assets-urls assets))
+        (fj--assets-placeholder-str)
         (if (not reactions)
             ""
           (concat "\n"
@@ -2856,8 +2843,16 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
        'fj-comment-id .id
        'fj-reactions reactions))))
 
-(defun fj-render-comments-assets-async ()
-  ""
+(defun fj--assets-placeholder-str ()
+  "Return an assets placeholder string.
+Added to all items/comments, deleted if item has no assets."
+  (concat "\n"
+          (propertize "[assets]"
+                      'fj-assets t)
+          "\n"))
+
+(defun fj-render-assets-async ()
+  "Render assets in current item view asynchonously."
   (let (assets-match)
     (save-excursion
       (goto-char (point-min))
@@ -2868,21 +2863,35 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
                 ;; create marker for this match:
                 (marker (copy-marker
                          (prop-match-beginning assets-match))))
-            (fj-get-comment-async repo owner id
-                                #'fj-render-comment-assets-cb
-                                marker)))))))
+            (if (not id)
+                ;; we are at an item (issue/PR), not a comment:
+                ;; it has assets data already
+                (fj-render-item-assets marker)
+              ;; comment, we must fetch it:
+              (fj-get-comment-async repo owner id
+                                  #'fj-render-comment-assets-cb
+                                  marker))))))))
+
+(defun fj-render-item-assets (marker)
+  "Render assets for item, an issue or PR.
+MARKER is where we insert the assets."
+  (let* ((item (fedi--property 'fj-item-data)))
+    (fj-render-comment-assets-cb item marker)))
 
 (defun fj-render-comment-assets-cb (data marker)
-  ""
+  "Render assets in DATA.
+MARKER is where we insert the assets."
   (with-current-buffer (marker-buffer marker)
     (let ((inhibit-read-only t)
           (assets (alist-get 'assets data)))
-      ;; goto marker for this match:
-      (goto-char (marker-position marker))
-      (when assets
-        (delete-char (length "[assets]"))
-        (insert
-         (fj-render-assets-urls assets)))
+      (save-excursion
+        ;; goto marker for this match:
+        (goto-char
+         (marker-position marker))
+        (delete-line)
+        (when assets
+          (insert
+           (fj-format-assets-urls assets))))
       ;; delete marker for this match:
       (set-marker marker nil))))
 
@@ -2902,14 +2911,6 @@ TS is a formatted timestamp."
    edited ;; (fj-edited-str-maybe .created_at .updated_at)
    (propertize (fj--issue-right-align-str ts)
                'face 'fj-item-byline-face)))
-
-;; NB: unused
-;; (defun fj-render-comments (comments &optional author owner)
-;;   "Render a list of COMMENTS.
-;; AUTHOR is the author of the parent issue.
-;; OWNER is the repo owner."
-;;   (cl-loop for c in comments
-;;            concat (fj-format-comment c author owner)))
 
 (defun fj-prop-item-flag (str)
   "Propertize STR as author face in box."
@@ -3022,7 +3023,7 @@ RELOAD mean we reloaded."
                        'fj-item-body t)
            ;; attachments:
            (when .assets
-             (fj-render-assets-urls .assets))
+             (fj--assets-placeholder-str))
            "\n"
            (fj-render-issue-reactions reactions)
            fedi-horiz-bar fedi-horiz-bar
@@ -3045,27 +3046,23 @@ RELOAD mean we reloaded."
         ;; Propertize top level item only:
         (fj-render-item-bodies)))))
 
-(defun fj-render-assets-urls (assets)
+(defun fj-format-assets-urls (assets)
   "Render download URLS of attachment data ASSETS.
 Creates a markdown link, with attachment name as display text.
 Renders it on the server, adds `fj-item-body' property so our rendering
 works on the resulting html."
   (concat
-   "\n📎 " (substring fedi-horiz-bar 3)
+   "📎 " (substring fedi-horiz-bar 3)
+   "\n"
    (propertize
     (mapconcat (lambda (x)
-                 (propertize
-                  ;; FIXME: markdown rendering adds an unwanted newline,
-                  ;; and stripping it still renders with an empty line! we
-                  ;; need to render each attachment separately so we can
-                  ;; then propertize it with its data
-                  (fj-render-markdown
-                   (concat
-                    "[" (alist-get 'name x) "]("
-                    (alist-get 'browser_download_url x)
-                    ")"))
-                  'fj-attachment x
-                  'fj-attachment-id (alist-get 'id x)))
+                 (let-alist x
+                   (propertize
+                    (fj-propertize-shr-link .browser_download_url
+                                          .name
+                                          .id)
+                    'fj-attachment x
+                    'fj-attachment-id (alist-get 'id x))))
                assets "\n")
     'fj-item-body t)))
 
@@ -3227,7 +3224,7 @@ END-PAGE should be a string of the highest page number to paginate to."
                          (point)))))
                 (fj-render-item-bodies render-point)))
             ;; async render assets:
-            (fj-render-comments-assets-async)
+            (fj-render-assets-async)
             ;; if view still has more items, add a "more" link:
             (fj-issue-timeline-more-link-mayb))))))))
 
@@ -3677,6 +3674,22 @@ NO-FACE means don't set a face prop."
                 'fj-tab-stop t
                 'category 'shr
                 'follow-link t)))
+
+(defun fj-propertize-shr-link (url &optional desc item)
+  "Propertize a link for URL with text DESC.
+Optionally add ITEM data."
+  (propertize (or desc url)
+              'face 'shr-link
+              'mouse-face 'highlight
+              'fj-tab-stop t
+              'shr-url url
+              'keymap fj-link-keymap
+              'button t
+              'type 'shr
+              'item item
+              'fj-tab-stop t
+              'category 'shr
+              'follow-link t))
 
 ;;; REVIEWS (PRS)
 
