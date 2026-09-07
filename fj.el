@@ -4782,7 +4782,8 @@ PAGE and LIMIT are for pagination."
                             :viewargs
                             ( :all ,all :status-types ,status-types
                               :subject-type ,subject-type
-                              :page ,page :limit ,limit))))
+                              :page ,page :limit ,limit)
+                            :url ,(format "%s/notifications" fj-host))))
     (with-current-buffer buf
       (fj-next-tab-item)
       (message (substitute-command-keys
