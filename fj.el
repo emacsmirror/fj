@@ -2888,7 +2888,7 @@ MARKER is where we insert the assets."
         ;; goto marker for this match:
         (goto-char
          (marker-position marker))
-        (delete-line)
+        (kill-whole-line 2) ;; remove placeholder + newline
         (when assets
           (insert
            (fj-format-assets-urls assets))))
@@ -3064,7 +3064,8 @@ works on the resulting html."
                     'fj-attachment x
                     'fj-attachment-id (alist-get 'id x))))
                assets "\n")
-    'fj-item-body t)))
+    'fj-item-body t)
+   "\n"))
 
 (defun fj-item-view (&optional repo owner number type page limit)
   "View item NUMBER from REPO of OWNER.
