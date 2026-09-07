@@ -1723,6 +1723,14 @@ OWNER is the repo owner."
                            owner repo comment)))
     (fj-get endpoint)))
 
+(defun fj-get-comment-async (repo owner comment cb &rest cbargs)
+  "GET data for COMMENT in REPO, async.
+COMMENT is a number.
+OWNER is the repo owner."
+  (let* ((endpoint (format "repos/%s/%s/issues/comments/%s"
+                           owner repo comment)))
+    (fedi-http--get-json-async (fj-api endpoint) nil cb cbargs)))
+
 (defun fj-issue-comment (&optional repo owner issue comment
                                    close)
   "Add COMMENT to ISSUE in REPO.
@@ -2818,8 +2826,9 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
           ;; timeline data doesn't have attachments data, so we need to
           ;; fetch the comment from its own endpoint if we want to render
           ;; them
-          (assets (alist-get 'assets
-                             (fj-get-comment repo owner nil .id))))
+          ;; (assets (alist-get 'assets
+          ;; (fj-get-comment repo owner nil .id)))
+          )
       (propertize
        (concat
         (fj-format-comment-header
@@ -2829,8 +2838,14 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
         "\n\n"
         (propertize (fj-render-body .body)
                     'fj-item-body t)
-        (when assets
-          (fj-render-assets-urls assets))
+        ;; assets placeholder:
+        (concat "\n"
+                (propertize "[assets]"
+                            ;; 'display 'invisible
+                            'fj-assets t)
+                "\n")
+        ;; (when assets
+        ;;   (fj-render-assets-urls assets))
         (if (not reactions)
             ""
           (concat "\n"
@@ -2840,6 +2855,33 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
        'fj-comment-author .user.username
        'fj-comment-id .id
        'fj-reactions reactions))))
+
+(defun fj-render-comments-assets ()
+  ""
+  (let (assets-match
+        (buf (current-buffer)))
+    (save-excursion
+      (goto-char (point-min))
+      (while (setq assets-match
+                   (text-property-search-forward 'fj-assets))
+        (fj-destructure-buf-spec (repo owner)
+          (let ((id (fedi--property 'fj-comment-id)))
+            (fj-get-comment-async repo owner id
+                                #'fj-render-comment-assets-cb
+                                buf
+                                (prop-match-beginning assets-match)
+                                (prop-match-end assets-match))))))))
+
+(defun fj-render-comment-assets-cb (data cbargs)
+  ""
+  (with-current-buffer (car cbargs)
+    (let ((inhibit-read-only t)
+          (assets (alist-get 'assets data)))
+      (goto-char (cadr cbargs))
+      (delete-char (length "[assets]"))
+      (when assets
+        (insert
+         (fj-render-assets-urls assets))))))
 
 (defun fj-format-comment-header (username author owner edited ts)
   "Format a comment header line.
@@ -3181,6 +3223,8 @@ END-PAGE should be a string of the highest page number to paginate to."
                          (text-property-search-forward 'fj-item-data)
                          (point)))))
                 (fj-render-item-bodies render-point)))
+            ;; async render assets:
+            (fj-render-comments-assets)
             ;; if view still has more items, add a "more" link:
             (fj-issue-timeline-more-link-mayb))))))))
 
