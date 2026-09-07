@@ -3198,7 +3198,7 @@ END-PAGE should be a string of the highest page number to paginate to."
               (save-excursion
                 (beginning-of-line)
                 (when (looking-at "\\[Loa")
-                  (kill-line)))
+                  (delete-line)))
               ;; raw render items:
               (fj-render-timeline json author owner repo))
             (message "Loading comments... Done")
