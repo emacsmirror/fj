@@ -2892,7 +2892,7 @@ MARKER is where we insert the assets."
         ;; goto marker for this match:
         (goto-char
          (marker-position marker))
-        (kill-whole-line 2) ;; remove placeholder + newline
+        (delete-region (pos-bol) (pos-bol 3)) ;; remove placeholder + newline
         (when assets
           (insert
            (fj-format-assets-urls assets))))
