@@ -2832,7 +2832,11 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
         "\n\n"
         (propertize (fj-render-body .body)
                     'fj-item-body t)
-        (fj--assets-placeholder-str)
+        ;; this function is currently also used for PR reviews, which
+        ;; don't have assets, so we skip them:
+        (if (not (string= (alist-get 'type comment) "comment"))
+            ""
+          (fj--assets-placeholder-str))
         (if (not reactions)
             ""
           (concat "\n"
