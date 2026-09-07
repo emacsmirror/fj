@@ -1729,7 +1729,7 @@ COMMENT is a number.
 OWNER is the repo owner."
   (let* ((endpoint (format "repos/%s/%s/issues/comments/%s"
                            owner repo comment)))
-    (fedi-http--get-json-async (fj-api endpoint) nil cb cbargs)))
+    (apply #'fedi-http--get-json-async (fj-api endpoint) nil cb cbargs)))
 
 (defun fj-issue-comment (&optional repo owner issue comment
                                    close)
@@ -2856,32 +2856,35 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
        'fj-comment-id .id
        'fj-reactions reactions))))
 
-(defun fj-render-comments-assets ()
+(defun fj-render-comments-assets-async ()
   ""
-  (let (assets-match
-        (buf (current-buffer)))
+  (let (assets-match)
     (save-excursion
       (goto-char (point-min))
       (while (setq assets-match
                    (text-property-search-forward 'fj-assets))
         (fj-destructure-buf-spec (repo owner)
-          (let ((id (fedi--property 'fj-comment-id)))
+          (let ((id (fedi--property 'fj-comment-id))
+                ;; create marker for this match:
+                (marker (copy-marker
+                         (prop-match-beginning assets-match))))
             (fj-get-comment-async repo owner id
                                 #'fj-render-comment-assets-cb
-                                buf
-                                (prop-match-beginning assets-match)
-                                (prop-match-end assets-match))))))))
+                                marker)))))))
 
-(defun fj-render-comment-assets-cb (data cbargs)
+(defun fj-render-comment-assets-cb (data marker)
   ""
-  (with-current-buffer (car cbargs)
+  (with-current-buffer (marker-buffer marker)
     (let ((inhibit-read-only t)
           (assets (alist-get 'assets data)))
-      (goto-char (cadr cbargs))
-      (delete-char (length "[assets]"))
+      ;; goto marker for this match:
+      (goto-char (marker-position marker))
       (when assets
+        (delete-char (length "[assets]"))
         (insert
-         (fj-render-assets-urls assets))))))
+         (fj-render-assets-urls assets)))
+      ;; delete marker for this match:
+      (set-marker marker nil))))
 
 (defun fj-format-comment-header (username author owner edited ts)
   "Format a comment header line.
@@ -3224,7 +3227,7 @@ END-PAGE should be a string of the highest page number to paginate to."
                          (point)))))
                 (fj-render-item-bodies render-point)))
             ;; async render assets:
-            (fj-render-comments-assets)
+            (fj-render-comments-assets-async)
             ;; if view still has more items, add a "more" link:
             (fj-issue-timeline-more-link-mayb))))))))
 
