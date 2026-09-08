@@ -56,10 +56,13 @@
 
 (require 'fj-transient)
 
+(require 'fj-inspect)
+
 ;;; VARIABLES
 ;; ours
 
 (defvar fj-token nil)
+(defvar fj-host nil) ;; dummy for fj-api/flycheck
 
 (defvar fj-extra-repos nil
   ;; list of "owner/repo"
@@ -198,6 +201,18 @@ If `fj-timeline-default-items' is not set, call `fj-default-limit'."
 Sets `corfu-auto' to t, buffer locally.
 Disable this if you prefer to trigger autocompletion manually."
   :type 'boolean)
+
+(defcustom fj-prefer-browse-url nil
+  "Whether to use `browse-url' instead of `browse-url-generic'.
+When nil (default), `browse-url-generic' is used directly.
+When non-nil, `browse-url' is used, respecting your
+`browse-url-browser-function' configuration."
+  :type 'boolean)
+
+(defcustom fj-list-repo-langs nil
+  "Whether to display a language column in repo listings.
+Requires an extra request per repo, so is disabled by default."
+  :type '(boolean))
 
 ;;; FACES
 
@@ -726,7 +741,7 @@ the working-directory (for directory-local variables)."
 
 (defmacro fj-with-buffer (buf mode wd ow &rest body)
   "Set up a BUF fer in MODE and call BODY.
-Sets up default-directory as WD and ensures local variables take effect
+Sets up `default-directory' as WD and ensures local variables take effect
 in non-file buffers.
 OW is other window argument for `fedi-with-buffer'."
   (declare (indent 4)
@@ -958,11 +973,11 @@ X and Y are sorting args."
   (setq tabulated-list-padding 0 ;2) ; point directly on issue
         tabulated-list-sort-key '("Updated" . t) ;; default
         tabulated-list-format
-        '[("Name" 16 t)
+        `[("Name" 16 t)
           ("★" 3 fj-tl-sort-by-stars :right-align t)
           ("" 2 t)
           ("issues" 5 fj-tl-sort-by-issue-count :right-align t)
-          ("Lang" 10 t)
+          ,@(when fj-list-repo-langs '(("Lang" 10 t)))
           ("Updated" 12 t)
           ("Description" 55 nil)])
   (setq imenu-create-index-function #'fj-tl-imenu-index-fun))
@@ -1708,6 +1723,14 @@ OWNER is the repo owner."
                            owner repo comment)))
     (fj-get endpoint)))
 
+(defun fj-get-comment-async (repo owner comment cb &rest cbargs)
+  "GET data for COMMENT in REPO, async.
+COMMENT is a number.
+OWNER is the repo owner."
+  (let* ((endpoint (format "repos/%s/%s/issues/comments/%s"
+                           owner repo comment)))
+    (apply #'fedi-http--get-json-async (fj-api endpoint) nil cb cbargs)))
+
 (defun fj-issue-comment (&optional repo owner issue comment
                                    close)
   "Add COMMENT to ISSUE in REPO.
@@ -1766,8 +1789,19 @@ NEW-BODY is the new comment text to send."
                           owner repo id)))
     (fj-get endpoint nil nil :silent)))
 
+(defun fj-get-comment-reactions-async (repo owner id)
+  "Return reactions data for comment with ID in REPO by OWNER."
+  (let ((endpoint (format "repos/%s/%s/issues/comments/%s/reactions"
+                          owner repo id)))
+    (apply #'fedi-http--get-json-async
+           nil #'fj-get-comment-reactions-cb)))
+
+(defun fj-get-comment-reactions-cb (json)
+  ;; FIXME: get timeline buf, go right comment, then:
+  (fj-render-comment-reactions json))
+
 (defun fj-render-issue-reactions (reactions)
-  "Render reactions for issue with ID in REPO by OWNER.
+  "Render REACTIONS for issue.
 If none, return emptry string."
   (if-let* ((grouped (fj-group-reactions reactions)))
       (concat fedi-horiz-bar "\n"
@@ -2425,6 +2459,8 @@ Optionally specify the STATE filter (open, closed, all), and the
 TYPE filter (issues, pulls, all).
 QUERY is a search query to filter by.
 SORT defaults to `fj-issues-sort-default'."
+  (when fj-inspect-profile-requests
+    (fj-inspect-profile-requests "fj issues/prs TL"))
   (let* ((repo (fj-read-user-repo arg))
          (owner (if (equal '(4) arg)
                     fj-user
@@ -2786,12 +2822,7 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
   (let-alist comment
     (let ((stamp (fedi--relative-time-description
                   (date-to-time .created_at)))
-          (reactions (fj-get-comment-reactions repo owner .id))
-          ;; timeline data doesn't have attachments data, so we need to
-          ;; fetch the comment from its own endpoint if we want to render
-          ;; them
-          (assets (alist-get 'assets
-                             (fj-get-comment repo owner nil .id))))
+          (reactions (fj-get-comment-reactions repo owner .id)))
       (propertize
        (concat
         (fj-format-comment-header
@@ -2801,8 +2832,11 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
         "\n\n"
         (propertize (fj-render-body .body)
                     'fj-item-body t)
-        (when assets
-          (fj-render-assets-urls assets))
+        ;; this function is currently also used for PR reviews, which
+        ;; don't have assets, so we skip them:
+        (if (not (string= (alist-get 'type comment) "comment"))
+            ""
+          (fj--assets-placeholder-str))
         (if (not reactions)
             ""
           (concat "\n"
@@ -2812,6 +2846,59 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
        'fj-comment-author .user.username
        'fj-comment-id .id
        'fj-reactions reactions))))
+
+(defun fj--assets-placeholder-str ()
+  "Return an assets placeholder string.
+Added to all items/comments, deleted if item has no assets."
+  (concat "\n"
+          (propertize "[assets]"
+                      'invisible t
+                      'fj-assets t)
+          "\n"))
+
+(defun fj-render-assets-async ()
+  "Render assets in current item view asynchonously."
+  (let (assets-match)
+    (save-excursion
+      (goto-char (point-min))
+      (while (setq assets-match
+                   (text-property-search-forward 'fj-assets))
+        (fj-destructure-buf-spec (repo owner)
+          (let ((id (fedi--property 'fj-comment-id))
+                ;; create marker for this match:
+                (marker (copy-marker
+                         (prop-match-beginning assets-match))))
+            (if (not id)
+                ;; we are at an item (issue/PR), not a comment:
+                ;; it has assets data already
+                (fj-render-item-assets marker)
+              ;; comment, we must fetch it:
+              (fj-get-comment-async repo owner id
+                                  #'fj-render-comment-assets-cb
+                                  marker))))))))
+
+(defun fj-render-item-assets (marker)
+  "Render assets for item, an issue or PR.
+MARKER is where we insert the assets."
+  (let* ((item (fedi--property 'fj-item-data)))
+    (fj-render-comment-assets-cb item marker)))
+
+(defun fj-render-comment-assets-cb (data marker)
+  "Render assets in DATA.
+MARKER is where we insert the assets."
+  (with-current-buffer (marker-buffer marker)
+    (let ((inhibit-read-only t)
+          (assets (alist-get 'assets data)))
+      (save-excursion
+        ;; goto marker for this match:
+        (goto-char
+         (marker-position marker))
+        (delete-region (pos-bol) (pos-bol 3)) ;; remove placeholder + newline
+        (when assets
+          (insert
+           (fj-format-assets-urls assets))))
+      ;; delete marker for this match:
+      (set-marker marker nil))))
 
 (defun fj-format-comment-header (username author owner edited ts)
   "Format a comment header line.
@@ -2829,14 +2916,6 @@ TS is a formatted timestamp."
    edited ;; (fj-edited-str-maybe .created_at .updated_at)
    (propertize (fj--issue-right-align-str ts)
                'face 'fj-item-byline-face)))
-
-;; NB: unused
-;; (defun fj-render-comments (comments &optional author owner)
-;;   "Render a list of COMMENTS.
-;; AUTHOR is the author of the parent issue.
-;; OWNER is the repo owner."
-;;   (cl-loop for c in comments
-;;            concat (fj-format-comment c author owner)))
 
 (defun fj-prop-item-flag (str)
   "Propertize STR as author face in box."
@@ -2949,7 +3028,7 @@ RELOAD mean we reloaded."
                        'fj-item-body t)
            ;; attachments:
            (when .assets
-             (fj-render-assets-urls .assets))
+             (fj--assets-placeholder-str))
            "\n"
            (fj-render-issue-reactions reactions)
            fedi-horiz-bar fedi-horiz-bar
@@ -2972,29 +3051,26 @@ RELOAD mean we reloaded."
         ;; Propertize top level item only:
         (fj-render-item-bodies)))))
 
-(defun fj-render-assets-urls (assets)
+(defun fj-format-assets-urls (assets)
   "Render download URLS of attachment data ASSETS.
 Creates a markdown link, with attachment name as display text.
 Renders it on the server, adds `fj-item-body' property so our rendering
 works on the resulting html."
   (concat
-   "\n📎 " (substring fedi-horiz-bar 3)
+   "📎 " (substring fedi-horiz-bar 3)
+   "\n"
    (propertize
     (mapconcat (lambda (x)
-                 (propertize
-                  ;; FIXME: markdown rendering adds an unwanted newline,
-                  ;; and stripping it still renders with an empty line! we
-                  ;; need to render each attachment separately so we can
-                  ;; then propertize it with its data
-                  (fj-render-markdown
-                   (concat
-                    "[" (alist-get 'name x) "]("
-                    (alist-get 'browser_download_url x)
-                    ")"))
-                  'fj-attachment x
-                  'fj-attachment-id (alist-get 'id x)))
+                 (let-alist x
+                   (propertize
+                    (fj-propertize-shr-link .browser_download_url
+                                          .name
+                                          .id)
+                    'fj-attachment x
+                    'fj-attachment-id (alist-get 'id x))))
                assets "\n")
-    'fj-item-body t)))
+    'fj-item-body t)
+   "\n"))
 
 (defun fj-item-view (&optional repo owner number type page limit)
   "View item NUMBER from REPO of OWNER.
@@ -3105,6 +3181,8 @@ END-PAGE should be a string of the highest page number to paginate to."
                     (alist-get 'message json) json))
        (t
         (fj-destructure-buf-spec (viewargs author owner repo)
+          (when fj-inspect-profile-requests
+            (fj-inspect-profile-requests "item timeline"))
           ;; unless init-page arg, increment page in viewargs
           (let* ((page (plist-get viewargs :page))
                  (final-load-p
@@ -3121,7 +3199,7 @@ END-PAGE should be a string of the highest page number to paginate to."
               (save-excursion
                 (beginning-of-line)
                 (when (looking-at "\\[Loa")
-                  (kill-line)))
+                  (delete-line)))
               ;; raw render items:
               (fj-render-timeline json author owner repo))
             (message "Loading comments... Done")
@@ -3151,6 +3229,8 @@ END-PAGE should be a string of the highest page number to paginate to."
                          (text-property-search-forward 'fj-item-data)
                          (point)))))
                 (fj-render-item-bodies render-point)))
+            ;; async render assets:
+            (fj-render-assets-async)
             ;; if view still has more items, add a "more" link:
             (fj-issue-timeline-more-link-mayb))))))))
 
@@ -3601,6 +3681,22 @@ NO-FACE means don't set a face prop."
                 'category 'shr
                 'follow-link t)))
 
+(defun fj-propertize-shr-link (url &optional desc item)
+  "Propertize a link for URL with text DESC.
+Optionally add ITEM data."
+  (propertize (or desc url)
+              'face 'shr-link
+              'mouse-face 'highlight
+              'fj-tab-stop t
+              'shr-url url
+              'keymap fj-link-keymap
+              'button t
+              'type 'shr
+              'item item
+              'fj-tab-stop t
+              'category 'shr
+              'follow-link t))
+
 ;;; REVIEWS (PRS)
 
 (defun fj-format-review (data ts format-str user)
@@ -3761,12 +3857,12 @@ Returns annotation for CAND, a candidate."
   (setq tabulated-list-padding 0 ;2) ; point directly on issue
         ;; tabulated-list-sort-key '("Updated" . t) ;; default
         tabulated-list-format
-        '[("Name" 12 t)
+        `[("Name" 12 t)
           ("Owner" 12 t)
           ("★" 3 fj-tl-sort-by-stars :right-align t)
           ("" 2 t)
           ("issues" 5 fj-tl-sort-by-issue-count :right-align t)
-          ("Lang" 10 t)
+          ,@(when fj-list-repo-langs '("Lang" 10 t))
           ("Updated" 12 t)
           ("Description" 55 nil)])
   (setq imenu-create-index-function #'fj-tl-imenu-index-fun))
@@ -3809,8 +3905,9 @@ NO-OWNER means don't display owner column (user repos view)."
             (updated-display
              (fedi--relative-time-description updated nil :brief))
             ;; just get first lang:
-            (lang (symbol-name
-                   (caar (fj-get-languages .name .owner.username)))))
+            (lang (when fj-list-repo-langs
+                    (symbol-name
+                     (caar (fj-get-languages .name .owner.username))))))
        `(nil ;; TODO: id
          [(,.name face fj-item-face
                   id ,.id
@@ -3833,7 +3930,7 @@ NO-OWNER means don't display owner column (user repos view)."
           (,(number-to-string .open_issues_count)
            id ,.id face fj-figures-face
            item repo)
-          (,lang) ;; .language
+          ,@(when fj-list-repo-langs `((,lang))) ;; .language
           (,updated-str
            display ,updated-display
            face default
@@ -4751,7 +4848,8 @@ PAGE and LIMIT are for pagination."
                             :viewargs
                             ( :all ,all :status-types ,status-types
                               :subject-type ,subject-type
-                              :page ,page :limit ,limit))))
+                              :page ,page :limit ,limit)
+                            :url ,(format "%s/notifications" fj-host))))
     (with-current-buffer buf
       (fj-next-tab-item)
       (message (substitute-command-keys
@@ -4882,18 +4980,25 @@ Use ID if provided."
 
 ;;; BROWSE
 
+(defun fj--browse-url (url)
+  "Browse URL using `browse-url' or `browse-url-generic'.
+Which function is used depends on `fj-prefer-browse-url'."
+  (if fj-prefer-browse-url
+      (browse-url url)
+    (browse-url-generic url)))
+
 (defun fj-tl-browse-entry ()
   "Browse URL of tabulated list entry at point."
   (interactive)
   (fj-with-entry
    (let ((url (fj--property 'fj-url)))
-     (browse-url-generic url))))
+     (fj--browse-url url))))
 
 (defun fj-browse-view ()
   "Browse URL of view at point."
   (interactive)
   (let ((url (fj--get-buffer-spec :url)))
-    (browse-url-generic url)))
+    (fj--browse-url url)))
 
 (defun fj-tl-imenu-index-fun ()
   "Function for `imenu-create-index-function'.
@@ -4991,7 +5096,8 @@ If it looks like a link to an item, load it."
            (fj-list-items (cadr owner-repo) (car owner-repo) nil "issues"))
           (3 (if (equal "pulls" last)
                  (fj-list-pulls (cadr owner-repo) (car owner-repo))
-               (fj-list-issues (cadr owner-repo) (car owner-repo))))
+               (fj-list-issues (cadr owner-repo)) ;(car owner-repo)
+               ))
           (_
            (fj-item-view
             (cadr owner-repo) (car owner-repo) last
@@ -5008,7 +5114,7 @@ ITEM is the team handle minus leading @.
 Note that teams URLs may not load if they are private."
   (pcase-let* ((`(,repo  ,team) (split-string item "/"))
                (url (format "%s/org/%s/teams/%s" fj-host repo team)))
-    (browse-url-generic url)))
+    (fj--browse-url url)))
 
 (defun fj-issue-ref-follow (item)
   "Follow an issue ref link.
@@ -5062,7 +5168,7 @@ Used for a mouse-click EVENT on a link."
   ;; FIXME: make for commit at point
   (let* ((resp (fj-get-commit repo owner sha))
          (url (alist-get 'html_url resp)))
-    (browse-url-generic url)))
+    (fj--browse-url url)))
 
 (defvar-keymap fj-commits-mode-map
   :doc "Keymap for `fj-commits-mode'."
