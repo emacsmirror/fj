@@ -2852,6 +2852,7 @@ AUTHOR is of comment, optionally suppress horiztontal bar with NO-BAR."
 Added to all items/comments, deleted if item has no assets."
   (concat "\n"
           (propertize "[assets]"
+                      'invisible t
                       'fj-assets t)
           "\n"))
 
