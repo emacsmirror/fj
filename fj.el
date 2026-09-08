@@ -214,6 +214,11 @@ When non-nil, `browse-url' is used, respecting your
 Requires an extra request per repo, so is disabled by default."
   :type '(boolean))
 
+(defcustom fj-show-commit-msg-in-pulls nil
+  "Whether to display commit messages for commits in PR timelines.
+Requires an extra request per commit, so is disabled by default."
+  :type '(boolean))
+
 ;;; FACES
 
 (defface fj-comment-face
@@ -3487,7 +3492,8 @@ TS is timestamp, BODY is the item's response."
   (let* ((json-array-type 'list)
          (json (json-read-from-string body))
          (commits (alist-get 'commit_ids json))
-         ;; (commits-data (fj-get-timeline-commits commits))
+         (commits-data (when fj-show-commit-msg-in-pulls
+                         (fj-get-timeline-commits commits)))
          (force
           (not
            (eq :json-false
@@ -3511,15 +3517,17 @@ TS is timestamp, BODY is the item's response."
                   'commit-ref (cadr commits)))
        (cl-loop
         for c in commits
-        ;; for d in commits-data
         for short = (substring c 0 7)
+        when fj-show-commit-msg-in-pulls
+        for d in commits-data
         concat
         (concat "\n"
                 (fj-propertize-link
-                 (concat
-                  short) ;;" "
-                  ;; (if d (car (string-lines (map-nested-elt d '(commit message))))
-                  ;;   "unreachable commit"))
+                 (if (not fj-show-commit-msg-in-pulls)
+                     short
+                   (concat short " "
+                           (if d (car (string-lines (map-nested-elt d '(commit message))))
+                             "unreachable commit")))
                  'commit-ref c)))))))
 
 (defun fj-render-timeline-item (item &optional author owner repo)
