@@ -3487,7 +3487,7 @@ TS is timestamp, BODY is the item's response."
   (let* ((json-array-type 'list)
          (json (json-read-from-string body))
          (commits (alist-get 'commit_ids json))
-         (commits-data (fj-get-timeline-commits commits))
+         ;; (commits-data (fj-get-timeline-commits commits))
          (force
           (not
            (eq :json-false
@@ -3511,15 +3511,15 @@ TS is timestamp, BODY is the item's response."
                   'commit-ref (cadr commits)))
        (cl-loop
         for c in commits
-        for d in commits-data
+        ;; for d in commits-data
         for short = (substring c 0 7)
         concat
         (concat "\n"
                 (fj-propertize-link
                  (concat
-                  short " "
-                  (if d (car (string-lines (map-nested-elt d '(commit message))))
-                    "unreachable commit"))
+                  short) ;;" "
+                  ;; (if d (car (string-lines (map-nested-elt d '(commit message))))
+                  ;;   "unreachable commit"))
                  'commit-ref c)))))))
 
 (defun fj-render-timeline-item (item &optional author owner repo)
